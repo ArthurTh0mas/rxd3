@@ -5,10 +5,14 @@ authors = ["ng8eke <ng8eke@163.com>"]
 edition = "2018"
 license = "Apache-2.0"
 description = "Rust binding for xdelta3"
+keywords = ["xdelta", "patch", "vcdiff"]
 repository = "https://github.com/ng8eke/rxd3"
 exclude = [
     "xdelta3/xdelta3/py-compile"
 ]
+
+[badges]
+maintenance = { status = "experimental" }
 
 [dependencies]
 libc = "0.2.51"
