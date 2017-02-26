@@ -33,6 +33,12 @@ fn main() {
     add_def(&mut defines, "XD3_WIN32", "1");
     add_def(&mut defines, "SHELL_TESTS", "0");
 
+    #[cfg(feature = "lzma")]
+    {
+        add_def(&mut defines, "SECONDARY_LZMA", "1");
+        pkg_config::Config::new().probe("liblzma").unwrap();
+    }
+
     {
         let mut builder = cc::Build::new();
         builder.include("xdelta3/xdelta3");
@@ -56,6 +62,8 @@ fn main() {
             .header("xdelta3/xdelta3/xdelta3.h")
             .parse_callbacks(Box::new(bindgen::CargoCallbacks))
             .whitelist_function("xd3_.*")
+            .whitelist_type("xd3_.*")
+            .rustified_enum("xd3_.*")
             .generate()
             .expect("Unable to generate bindings");
 

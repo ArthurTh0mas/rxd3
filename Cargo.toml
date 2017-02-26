@@ -1,6 +1,6 @@
 [package]
 name = "xdelta3"
-version = "0.1.2"
+version = "0.1.5"
 authors = ["ng8eke <ng8eke@163.com>", "Khole Lu <kklu@me.com>"]
 edition = "2018"
 license = "Apache-2.0"
@@ -15,9 +15,13 @@ exclude = [
 maintenance = { status = "experimental" }
 
 [dependencies]
-libc = "0.2.55"
+libc = "0.2"
 
 [build-dependencies]
 cc = "1.0"
-rand = "0.6.5"
+rand = "0.6"
 bindgen = "0.52"
+pkg-config = { version = "0.3", optional = true }
+
+[features]
+lzma = ["pkg-config"]
