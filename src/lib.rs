@@ -125,3 +125,187 @@ pub fn decode(input: &[u8], src: &[u8]) -> Option<Vec<u8>> {
         }
     }
 }
+
+use futures::io::*;
+use std::ops::Range;
+
+pub fn decode2(input: &[u8], src: &[u8]) -> Option<Vec<u8>> {
+    let mut out = Vec::new();
+    futures::executor::block_on(decode_async(input, src, &mut out));
+    Some(out)
+}
+
+struct SrcBuffer<R> {
+    src: binding::xd3_source,
+    read: R,
+    read_len: usize,
+    eof_known: bool,
+
+    block_count: usize,
+    block_start: usize,
+    block_offset: usize,
+    buf: Box<[u8]>,
+}
+
+impl<R: AsyncRead + Unpin> SrcBuffer<R> {
+    async fn new(mut read: R) -> Self {
+        let block_count = 16;
+        let blksize = 32768;
+        let max_winsize = blksize * block_count;
+
+        let mut src: binding::xd3_source = unsafe { std::mem::zeroed() };
+        src.blksize = blksize as u32;
+        src.max_winsize = max_winsize as u64;
+
+        let mut buf = Vec::with_capacity(max_winsize);
+        buf.resize(max_winsize, 0u8);
+
+        let read_len = read.read(&mut buf).await.unwrap();
+
+        Self {
+            src,
+            read,
+            read_len,
+            eof_known: read_len != buf.len(),
+
+            block_count,
+            block_start: 0,
+            block_offset: 0,
+            buf: buf.into_boxed_slice(),
+        }
+    }
+
+    async fn fetch(&mut self) -> bool {
+        self.block_start = (self.block_start + 1) % self.block_count;
+        self.block_offset += 1;
+
+        let idx = self.block_start + self.block_count - 1;
+        let r = self.block_range(idx);
+        let block = &mut self.buf[r];
+        let read_len = self.read.read(block).await.unwrap();
+
+        self.read_len += read_len;
+
+        read_len != block.len()
+    }
+
+    async fn prepare(&mut self, idx: usize) {
+        while idx >= self.block_start + self.block_count {
+            let eof = self.fetch().await;
+            if eof {
+                self.eof_known = true;
+                break;
+            }
+        }
+    }
+
+    fn block_range(&self, idx: usize) -> Range<usize> {
+        assert!(idx >= self.block_start);
+
+        let idx = (idx + self.block_start) % self.block_count;
+        let start = (self.src.blksize as usize) * idx;
+        let end = (self.src.blksize as usize) * (idx + 1);
+
+        let start = start.min(self.read_len);
+        let end = end.min(self.read_len);
+
+        start..end
+    }
+
+    async fn getblk(&mut self) {
+        println!(
+            "getsrcblk: curblkno={}, getblkno={}",
+            self.src.curblkno, self.src.getblkno,
+        );
+
+        let blkno = self.src.getblkno as usize;
+        self.prepare(blkno).await;
+        let range = self.block_range(blkno);
+
+        let src = &mut self.src;
+        let data = &self.buf[range];
+
+        src.curblkno = src.getblkno;
+        src.curblk = data.as_ptr();
+        src.onblk = data.len() as u32;
+
+        src.max_blkno = src.curblkno;
+        src.onlastblk = src.onblk;
+        src.eof_known = self.eof_known as i32;
+    }
+}
+
+pub async fn decode_async<R1, R2, W>(mut input: R1, src: R2, mut out: W)
+where
+    R1: AsyncRead + Unpin,
+    R2: AsyncRead + Unpin,
+    W: AsyncWrite + Unpin,
+{
+    let mut stream: binding::xd3_stream = unsafe { std::mem::zeroed() };
+    let mut cfg: binding::xd3_config = unsafe { std::mem::zeroed() };
+
+    let mut src_buf = SrcBuffer::new(src).await;
+
+    let ret = unsafe { binding::xd3_config_stream(&mut stream, &mut cfg) };
+    assert_eq!(ret, 0);
+
+    let ret = unsafe { binding::xd3_set_source(&mut stream, &mut src_buf.src) };
+    assert_eq!(ret, 0);
+
+    let mut input_buf = [0u8; 1024 * 4];
+    let mut eof = false;
+
+    'outer: while !eof {
+        let read_size = input.read(&mut input_buf).await.unwrap();
+        println!("read_size={}", read_size);
+        if read_size == 0 {
+            // xd3_set_flags
+            stream.flags = binding::xd3_flags::XD3_FLUSH as i32;
+            eof = true;
+        }
+
+        // xd3_avail_input
+        stream.next_in = input_buf.as_ptr();
+        stream.avail_in = read_size as u32;
+
+        loop {
+            let ret: binding::xd3_rvalues =
+                unsafe { std::mem::transmute(binding::xd3_decode_input(&mut stream)) };
+
+            if stream.msg != std::ptr::null() {
+                println!(
+                    "msg={:?}, ret={:?}",
+                    unsafe { std::ffi::CStr::from_ptr(stream.msg) },
+                    ret
+                );
+            }
+
+            use binding::xd3_rvalues::*;
+            match ret {
+                XD3_INPUT => {
+                    println!("input");
+                    continue 'outer;
+                    //
+                }
+                XD3_OUTPUT => {
+                    println!("output");
+                    let out_data = unsafe {
+                        std::slice::from_raw_parts(stream.next_out, stream.avail_out as usize)
+                    };
+                    out.write(out_data).await.unwrap();
+                }
+                XD3_GETSRCBLK => {
+                    src_buf.getblk().await;
+                }
+                XD3_GOTHEADER | XD3_WINSTART | XD3_WINFINISH => {
+                    //
+                }
+                XD3_TOOFARBACK | XD3_INTERNAL | XD3_INVALID | XD3_INVALID_INPUT | XD3_NOSECOND
+                | XD3_UNIMPLEMENTED => {
+                    unimplemented!();
+                    //
+                }
+            }
+        }
+    }
+}
