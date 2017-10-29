@@ -15,6 +15,9 @@ extern crate libc;
 
 use libc::c_uint;
 
+#[cfg(feature = "stream")]
+pub mod stream;
+
 #[allow(dead_code)]
 mod binding {
     #![allow(non_upper_case_globals)]
