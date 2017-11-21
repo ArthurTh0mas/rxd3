@@ -13,6 +13,8 @@ jobs:
         displayName: "Build rxd3"
       - bash: "cargo test"
         displayName: "Test rxd3"
+      - bash: "cargo test --no-default-features --tests"
+        displayName: "Test rxd3 (no-default-features)"
 
   - job: macOS
     pool:
@@ -28,6 +30,8 @@ jobs:
         displayName: "Build rxd3"
       - bash: $HOME/.cargo/bin/cargo test
         displayName: "Test rxd3"
+      - bash: $HOME/.cargo/bin/cargo test --no-default-features --tests
+        displayName: "Test rxd3 (no-default-features)"
 
   - job: Windows
     pool:
@@ -45,3 +49,5 @@ jobs:
         displayName: "Fix line ending of examples"
       - bash: $HOME/.cargo/bin/cargo test
         displayName: "Test rxd3"
+      - bash: $HOME/.cargo/bin/cargo test --no-default-features --tests
+        displayName: "Test rxd3 (no-default-features)"
